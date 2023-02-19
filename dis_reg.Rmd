@@ -1,0 +1,612 @@
+---
+title: 
+author: "Waleed Idrees (Data Scientist) ,Ben Neffendorf (Head of Insight)"
+date: "`r Sys.Date()`"
+output:
+  github_document:
+    df_print: paged
+subtitle: Report produced By Cignpost Diagnostics Data Department
+runningheader: Tufte Handout with R Markdown
+---
+
+```{r, setup, echo = FALSE, warning = FALSE, message = FALSE }
+#rm(list = ls())
+knitr::opts_chunk$set(comment = "#>", echo = FALSE, warning = FALSE, message = FALSE, fig.width = 16, fig.height = 9  )
+
+```
+
+```{r, include=FALSE}
+
+pacman::p_load('BiocManager')
+pacman::p_load(tufte)
+pacman::p_load(RODBC)
+pacman::p_load(dbplyr)
+pacman::p_load(GGally)
+pacman::p_load(tidyverse)
+pacman::p_load(tidymodels)
+pacman::p_load(vip)
+pacman::p_load(palmerdfs)
+pacman::p_load(rpart.plot)
+# invalidate cache when the tufte version changes
+knitr::opts_chunk$set(cache.extra = packageVersion('tufte'))
+options(htmltools.dir.version = FALSE)
+title_var <-  "New Sites Model"
+
+output<- 
+  ("C:/Waleed_CPD/NewSitesModel/")
+
+```
+
+---
+title: `r title_var`
+---
+
+
+```{r}
+
+output<- 
+  ("/Users/waleedidrees/Dropbox/R projects/Waleed_CPD/Clustering_hometests_population/")
+
+
+df_test_0 <- 
+  readRDS(
+    paste0(output,"df_tests_calc_loc1.RDS")
+    ) 
+
+
+
+df_test_0<- 
+df_test_0 |>
+  #filter(technology_test == "PCR") %>% 
+  filter(location_category == "RHC") |>
+  filter(date_of_test >= "2021-08-01" & date_of_test <= "2021-10-01")|>
+  filter(!cleaned_location %in% c("Home Testing", "Load Testing", "0") 
+         ) 
+
+df_test_0$post_code<- base::iconv(df_test_0$post_code ,from = "ISO-8859-1", to="UTF-8", sub="byte")
+df_test_0$city<- base::iconv(df_test_0$city ,from = "ISO-8859-1", to="UTF-8", sub="byte")
+df_test_0$county<- base::iconv(df_test_0$county , from = "ISO-8859-1",to="UTF-8", sub="byte")
+
+```
+
+```{r}
+
+#df_test_0<- df_test_0 %>% mutate(weekly = lubridate::week(date_of_test))
+
+df_test_0<- df_test_0 %>% mutate(monthly = lubridate::month(date_of_test))
+
+```
+
+
+
+
+```{r}
+# Tests Data ETL
+df_test_0 <-
+  df_test_0 |>
+  mutate(
+    amount_paid = as.double(str_sub(amount_paid, 1, 5)),
+    Cust_PostCode = str_replace_all(post_code, " " , ""),
+    Cust_PostCode = str_sub(Cust_PostCode, 1,-3),
+    Site_PostCode = postcode,
+  ) |>
+  mutate_if(is.character, tolower) |>
+  mutate(sex =
+           case_when(grepl("^f", sex) ~ "F",
+                     grepl("^m", sex) ~ "M",
+                     TRUE ~ "Other")) |>
+  filter(sex != "Other") |>
+  select(
+    c(
+      monthly,
+      #weekly,
+      amount_paid,
+      cleaned_location,
+      Cust_PostCode,
+      age,
+      product_type,
+      sex,
+      technology_test,
+      Site_PostCode
+    )
+  )
+
+df_test_0 <-
+  df_test_0 |>
+  mutate_if(is.factor, as.character) |>
+  group_by(
+    monthly,
+    #weekly, 
+    Site_PostCode, 
+    Cust_PostCode
+    ) |>
+  summarise(
+    No_of_tests = n(),
+    Avg_age = mean(age, na.rm = TRUE),
+    #No_of_tests = No_of_tests * amount_paid
+    )|> 
+  as.data.frame() |>
+  select(
+    -monthly,
+    #-weekly
+    )
+
+df_test_1<-
+df_test_0 |>
+  mutate(
+    Cust_PostCode =
+      case_when(
+        !str_detect(Cust_PostCode, '^[a-z]+\\**') ~ "International",
+        length(Cust_PostCode) <= 3 ~ "International",
+        TRUE ~ Cust_PostCode
+      )
+  ) |>
+  filter(Cust_PostCode != "International") |>
+  as.data.frame() |>
+  mutate(
+    Site_PostCode1 = str_replace_all(Site_PostCode, " " , ""),
+    Site_PostCode1 = str_sub(Site_PostCode1, 1,-3),
+  )
+
+
+rm(list = c("df_test_0"))
+```
+
+
+
+```{r}
+
+# Distance Data ETL
+## Join test and distance data
+df_dis <- readRDS(paste0(output,"df_distance.RDS"))
+
+df_dis <-
+  df_dis |>
+  mutate_if(is.character, tolower) |>
+  mutate(
+    Cust_PostCode = str_replace_all(Cust_Postcode, " " , ""),
+    Cust_PostCode = str_sub(Cust_PostCode, 1,-3),
+    Site_PostCode = Site_Postcode
+    ) |>
+  group_by(Site_PostCode, Cust_PostCode) |>
+  summarise(Avg_time =  mean( (Travel_Time_In_Seconds/60) ))
+
+df_test<-
+df_test_1 |>
+  left_join(df_dis,
+            by = c("Site_PostCode", "Cust_PostCode")) |> 
+  as.data.frame() |> drop_na()
+
+
+rm(list = "df_dis")
+
+```
+
+```{r}
+
+## Join Population data to maind dataset
+
+df_population <-
+  vroom::vroom (paste0(output, "postcodes_data.csv"))
+
+df_population$PCD<- base::iconv(df_population$PCD , to="UTF-8", sub="byte")
+
+df_population<-
+  df_population |> 
+  mutate(
+    Cust_PostCode = str_replace_all(PCD, " " , ""),
+    Cust_PostCode = str_sub(Cust_PostCode, 1,-3) 
+  ) |> 
+  select(
+    PCD,
+    Cust_PostCode,
+    Total_Population= Total_Persons,
+    OAC_Goup_Name,
+    EIMD_2015_Score,
+    EIMD_2015_Rank,
+    LSOA_Depriv_Score = LSOA_DZ_Townsend_Deprivation_Score,
+    LSOA_Depriv_Quint =  LSOA_DZ_Townsend_Deprivation_Quintile,
+    OA_Depriv_Score = OA_SA_Townsend_Deprivation_Score,
+    OA_Depriv_Quint = OA_SA_Townsend_Deprivation_Quintile
+  ) |> 
+  mutate_if(is.character, tolower)
+
+
+df_population_2<- 
+df_population |> 
+  group_by(Cust_PostCode) |> 
+  summarise(
+  Total_Persons = sum(Total_Population, na.rm = TRUE),
+  Avg_LSOA_Depriv_Score  = sum(LSOA_Depriv_Score , na.rm = TRUE),
+  #Avg_LSOA_Depriv_Quint  = mean(LSOA_Depriv_Quint , na.rm = TRUE),
+ Avg_OA_Depriv_Score  = sum(OA_Depriv_Score , na.rm = TRUE)
+ ## Avg_OA_Depriv_Quint  = mean(OA_Depriv_Quint , na.rm = TRUE),
+  ) |> 
+  mutate_at(c(3), round,2)
+
+df_pop<-
+df_population |> 
+  group_by( Cust_PostCode, OAC_Goup_Name ) |> 
+  summarise(group_freq = n()) 
+
+
+best_group<-
+df_pop |>
+  group_by(Cust_PostCode) |> 
+summarise( group_freq = max(group_freq))
+
+
+df_population_3<-
+df_pop |> 
+  inner_join(  
+    best_group,
+    by = c("Cust_PostCode", "group_freq")
+    )
+
+df_population<-
+df_population_2 |> 
+  left_join(
+    df_population_3 ,
+    by = c("Cust_PostCode")
+  ) 
+
+rm(list = c("df_pop","best_group","df_population_3"))
+
+df_test<-
+df_test |>
+    left_join(df_population |>
+              select(
+                -c(
+                   group_freq
+                )) ,
+            by = c("Cust_PostCode"))
+
+
+rm(list = "df_population")
+```
+
+
+
+
+```{r}
+df_test<-
+df_test |> 
+  rename( 
+    Cust_Pop = Total_Persons,
+    Avg_LSOA_Depr_Cust = Avg_LSOA_Depriv_Score,
+    Avg_OA_Depr_Cust = Avg_OA_Depriv_Score,
+    OAC_Goup_Cust = OAC_Goup_Name
+                     ) %>% 
+  select(-c(Avg_OA_Depr_Cust, Avg_LSOA_Depr_Cust, OAC_Goup_Cust))
+
+df_ready<- df_test[ , !names(df_test) %in% c( "Cust_PostCode", "Site_PostCode1", "Avg_age")] %>% drop_na()
+
+```
+
+
+```{r}
+#skimr::skim(df_ready)
+```
+
+
+
+
+
+
+# Introduction to Model
+
+This model is build to understand the relationship between distance traveled and number of tests figure out where to install new RHC sites. Model takes the data from existing customers from out data base for all RHC sites. to start building a predictive model we need a target variable that we are trying to predict. We want to find out what location will yield good sales. So we use total sales as a target variable which will tell us if a certain location will yield good sales. 
+
+We use the data only for only RHC sites for this analysis as airport sites have different attributes compared to RHC sites. Target measure is total no of tests used as a measure of total sales. Its created by grouping data by Site postcode, customer postcode sector and month. So we get number of tests on each site from different postcode sector every month.
+
+
+# Data Collection 
+
+Explanatory variables is distance traveled in minutes and its pulled from f_master_tests_data. We then connect this data with the distance traveled table to get average distance traveled to site in mins. This information can be useful to help us figure out how much customers are willing to travel and how far two sites should be to avoid cannibalization.
+
+Total population variable is taken from Office of national statistics website. Population data is collected from 2011 census from office of national statistics website. Its not been updated since past 10 years but that's the only info we can collect at the moment for free. 
+
+
+```{r, fig.margin=TRUE}
+
+# df_ready |> 
+#   group_by(No_of_tests) |> 
+#   ggplot(aes(No_of_tests, fill = Site_PostCode)) +
+#   geom_histogram(position = "identity", alpha = 0.5, bins = 20 ) +
+#   labs(fill = NULL, x = "total tests freq by site")
+  
+
+```
+
+# Descriptive Statistics
+
+Final data used in this model has 24147 conversations. Average test from each sector is 8, with a max of 463 tests. Average time travelled to site is 69 mins and the max time traveled is 933 mins. 
+
+```{r}
+pacman::p_load(psych)
+
+df_stats<-
+  df_ready[, c(1:ncol(df_ready)) ] |>
+  psych::describe() |>
+  select(-c(mad, trimmed, skew, kurtosis, se) )
+
+df_stats[ c(2,3) ,] %>%  knitr::kable( caption = "Descriptive Statistics of no of tests and explanatory variables")
+```
+
+```{r}
+df_ready_1<- df_ready %>% filter(!Site_PostCode %in% c("ab11 5bj", "nw4 3fb", "pa3 2td", "b40 1nt",  "w8 7rg") ) %>%  mutate(
+  cust_test_pop = No_of_tests/Cust_Pop,
+  ) %>% filter(cust_test_pop <= 0.05)
+
+q1 <-
+  round(as.tibble(quantile(
+    df_ready_1$Avg_time, prob = c(.10), na.rm = TRUE
+  ))[1]$value , 0)
+
+
+q2 <-
+  round(as.tibble(quantile(
+    df_ready_1$Avg_time, prob = c(.25),
+    na.rm = TRUE
+  ))[1]$value ,
+  0)
+
+q3 <-
+  
+  round(as.tibble(quantile(
+    df_ready_1$Avg_time,
+    prob = c(.5), na.rm = TRUE
+  ))[1]$value,
+  0)
+
+q4 <-
+  round(as.tibble(quantile(
+    df_ready_1$Avg_time,
+    prob = c(.75), na.rm = TRUE
+  ))[1]$value,
+  0)
+
+q5 <-
+  round(as.tibble(quantile(
+    df_ready_1$Avg_time,
+    prob = c(.90), na.rm = TRUE
+  ))[1]$value,
+  0)
+
+q6 <-
+  round(as.tibble(quantile(
+    df_ready_1$Avg_time,
+    prob = c(.95), na.rm = TRUE
+  ))[1]$value,
+  0)
+
+
+q_rng<-as.integer(c(q1,q2,q3,q4,q5))
+
+   
+df_ready2<-
+df_ready_1 %>%
+  mutate( 
+    Avg_time_bins=
+  case_when(
+    Avg_time <= q_rng[1] ~ "0-10",
+    Avg_time > q_rng[1] & Avg_time <= q_rng[2] ~ "11-25",
+    Avg_time > q_rng[2] & Avg_time <= q_rng[3] ~ "26-41",
+    Avg_time > q_rng[3] & Avg_time <= q_rng[4] ~ "42-68",
+    Avg_time > q_rng[4] & Avg_time <= q_rng[5] ~ "69-137",
+    TRUE ~ "138+"
+  )
+)
+
+
+df_ready_group<-
+df_ready_1 %>% 
+  group_by(Site_PostCode, No_of_tests)%>% 
+  summarise_all(funs(mean(.)))
+```
+```{r}
+
+df_list<-
+map(
+  unique(df_ready2$Avg_time_bins), ~ df_ready2 %>% filter(Avg_time_bins == .x)
+)
+names(df_list)<- unique(df_ready2$Avg_time_bins)
+
+```
+
+
+
+```{r}
+set.seed(1996)
+pacman::p_load("themis")
+
+lm_model <- 
+  linear_reg() |>
+  set_engine("lm") |> 
+  set_mode("regression")
+
+fun_lm<-
+function(x) {
+  
+  df_rec <-
+    recipe(No_of_tests ~ Avg_time, data = df_list[[x]]) |>
+    step_integer(all_predictors()) |>
+    step_mutate(No_of_tests =  log10(No_of_tests)) |>
+    step_zv(all_predictors()) |>
+    step_corr(all_numeric(),-all_outcomes(), threshold = 0.9) |>
+    step_normalize(all_numeric_predictors()) |>
+    step_dummy(all_nominal_predictors(), one_hot = TRUE)
+  
+  df_wf <-
+    workflow() |>
+    add_model(lm_model) |>
+    add_recipe(df_rec)
+  
+  lm_fit <- fit(df_wf, df_list[[x]])
+  broom::tidy(lm_fit) |>
+    mutate_at(c("p.value"), round, 2) |>
+    arrange(p.value) %>% mutate(Avg_timebin = x)
+
+}
+
+coef_list<-
+map(names(df_list), fun_lm)
+
+names(coef_list) <- names(df_list)
+ 
+df_ceof<-do.call("rbind",coef_list)
+
+graph_data<- df_ceof %>%as.data.frame() %>%  filter(term =="Avg_time") %>% select(estimate,Avg_timebin) %>% mutate_at("estimate", round,2)
+
+
+graph_data_coef<- df_ceof %>%as.data.frame() %>%  filter(term !="Avg_time") %>% select(estimate,Avg_timebin) %>% mutate_at("estimate", round,2)
+
+
+```
+
+```{r}
+
+GRAY1 <- "#231F20"
+GRAY2 <- "#414040"
+GRAY3 <- "#555655"
+GRAY4 <- "#646369"
+GRAY5 <- "#76787B"
+GRAY6 <- "#828282"
+GRAY7 <- "#929497"
+GRAY8 <- "#A6A6A5"
+GRAY9 <- "#BFBEBE"
+BLUE1 <- "#174A7E"
+BLUE2 <- "#4A81BF"
+BLUE3 <- "#94B2D7"
+BLUE4 <- "#94AFC5"
+BLUE5 <- "#22435e"
+BLUE6 <- "#95B3D7"
+RED1 <- "#C3514E"
+RED2 <- "#E6BAB7"
+RED3 <- "#800000"
+GREEN1 <- "#0C8040"
+GREEN2 <- "#9ABB59"
+GREEN3 <- "#31859C"
+GREEN4 <- "#4BACC6"
+GREEN5 <- "#93CDDD"
+ORANGE1 <- "#F79747"
+ORANGE2 <- "#FAC090"
+
+theme_swd <- function() {
+  theme_minimal(base_size = 8, base_family = "Helvetica") +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.line = element_line(size = .1, color = GRAY9),
+      axis.text = element_text(color = GRAY7),
+      axis.ticks.x = element_line(size = 0.5, color = GRAY9),
+      axis.ticks.y = element_line(size = 0.5, color = GRAY9),
+      axis.title = element_text(color = GRAY3),
+      axis.title.y = element_text(hjust = 1, margin = margin(0, 6, 0, 15, "pt")),
+      axis.title.x = element_text(hjust = 0, margin = margin(6, 0, 15, 0, "pt")),
+      plot.subtitle = element_text(color = GRAY4, size= 8),
+      plot.title = element_text(color = GRAY4, size= 12),
+      plot.title.position = "plot", # This aligns the plot title to the very left edge
+      plot.caption = element_text(hjust = 0, color = GRAY6),
+      plot.caption.position = "plot",
+      plot.margin = margin(.5,.5,.5,.5,"cm"),
+      strip.text = element_text(color = GRAY7)) 
+}
+
+pacman::p_load(forcats)
+pacman::p_load(gridtext)
+pacman::p_load(gridExtra)
+pacman::p_load(grid)
+
+grob_explanation_1 <-
+  grobTree(
+    richtext_grob(
+        "<span style='background-color:white'
+        ><b>Relationship between no of tests and distance travelled.</b>
+         <br>We show buckets of distance travelled at 10%, 25%, 50% , 75% and 95% quantile.
+         <br>Graph also shows regression constant and slope coefficients for each bucket.
+         </br>   
+         </span>"
+      ,
+      x = .5,
+      y = .95,
+      hjust = 0,
+      gp = gpar(col = GRAY3, fontsize = 12),
+      box_gp = gpar(col = "white", fill = "white"),
+      padding = margin(.4, 0, 0, 0, "in")
+    )
+  )
+
+
+```
+
+
+## Model
+
+Graphs below shows a people getting tested within different time buckets. the relationship between the average time and no of tests is given in each bucket using a regression equation. 
+
+our constant for people who live within 0-10 mins distance explains that 1% of people who live from 0-10 mins distance get the test regardless of the avg time travel. However, as the time increases by 1 min we may loose there 0.04 test.
+
+The constant decreases as the average time traveled increases from 1.04 in 0-10 zone to .014 in 69-137 zone. Also the coefficient of effect gets smaller as we move from a smaller time zone to larger time zone.
+
+
+```{r}
+df_ready_group %>% 
+  filter(Avg_time <=500) %>% 
+  ggplot() +
+  aes(y= cust_test_pop, x = Avg_time) +
+  geom_smooth() +
+  geom_vline(xintercept = q1, linetype = "longdash") + 
+  geom_label(x = q1, y= 0.04 ,label = "0-10 mins ", hjust = 1, label.size = 0) +
+  geom_label(x = q1, y= 0.038 ,label = paste0(
+    "Coef"," = ", graph_data_coef$estimate[graph_data_coef$Avg_timebin=="0-10"], " ", graph_data$estimate[graph_data$Avg_timebin =="0-10"]) , hjust = 1, label.size = 0) + 
+  
+  geom_vline(xintercept = q2, linetype = "longdash", colour = "black") +
+  geom_label(x = q2, y= 0.035 ,label = "11-25 mins", hjust = 1, label.size = 0) +
+  geom_label(x = q2, y= 0.033 ,label = paste0(
+    "Coef"," = ",graph_data_coef$estimate[graph_data_coef$Avg_timebin=="11-25"], " ", graph_data$estimate[graph_data$Avg_timebin =="11-25"]), hjust = 1, label.size = 0) + 
+  
+  geom_vline(xintercept = q3, linetype = "longdash", colour = "black") +
+  geom_label(x = q3, y= 0.03 ,label = "26-41 mins", hjust = 1, label.size = 0) +
+  geom_label(x = q3, y= 0.028 ,label = paste0(
+    "Coef"," = ",graph_data_coef$estimate[graph_data_coef$Avg_timebin=="26-41"], " ", graph_data$estimate[graph_data$Avg_timebin =="26-41"]), hjust = 1, label.size = 0) + 
+  
+  geom_vline(xintercept = q4, linetype = "longdash", colour = "black") +
+  geom_label(x = q4, y= 0.025 ,label = "42-68 mins", hjust = 1, label.size = 0) +
+  geom_label(x = q4, y= 0.023 ,label =paste0(
+    "Coef"," = " , graph_data_coef$estimate[graph_data_coef$Avg_timebin=="42-68"], " ", graph_data$estimate[graph_data$Avg_timebin =="42-68"]), hjust = 1, label.size = 0) + 
+  
+  geom_vline(xintercept = q5, linetype = "longdash", colour = "black") +
+  geom_label(x = q5, y= 0.02 ,label = "69-137 mins", hjust = 1, label.size = 0) +
+  geom_label(x = q5, y= 0.018 ,label =paste0(
+    "Coef"," = ", graph_data_coef$estimate[graph_data_coef$Avg_timebin=="69-137"], " ", graph_data$estimate[graph_data$Avg_timebin =="69-137"]), hjust = 1, label.size = 0) + 
+  
+  #facet_wrap(~Site_PostCode)+
+  geom_point(size = 1, data = df_ready2 %>% filter(Avg_time_bins == "0-10") , color = RED1) +
+  geom_point(size = 1, data = df_ready2 %>% filter(Avg_time_bins == "11-25") , color = RED2) +
+  geom_point(size = 1, data = df_ready2 %>% filter(Avg_time_bins == "26-41") , color = ORANGE1) +
+  geom_point(size = 1, data = df_ready2 %>% filter(Avg_time_bins == "42-68") , color = ORANGE2) +
+  geom_point(size = 1, data = df_ready2 %>% filter(Avg_time_bins == "69-137") , color = GREEN1)+
+  geom_point(size = 1, data = df_ready2 %>% filter(Avg_time_bins == "138+") %>% filter(Avg_time<= q6) , color = GREEN3)+
+  geom_smooth(size = 1, data = df_ready2  , color = GREEN5, method ="lm")+
+  geom_smooth()+
+  scale_x_continuous(breaks = seq(1, q6, 20), limits = c(1, q6)) +
+   theme_minimal() + 
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  axis.line = element_line(color = GRAY9),
+  axis.title.y = element_text(color = GRAY8, hjust = 1),
+  axis.title.x = element_text(color = GRAY8, hjust = 0),
+  axis.ticks = element_line(color = GRAY9),
+  axis.text = element_text(color = GRAY8, size = 12),
+  plot.margin = unit(c(1, 4, 1, 1), "cm"),
+  plot.title = element_text(size = 18),
+  plot.caption = element_text(color = GRAY8,
+                              hjust = 0,
+                              margin = margin(.3, 0, 0, 0, "cm"))
+                                  )+
+  annotation_custom(grob_explanation_1)
+
+```
+
