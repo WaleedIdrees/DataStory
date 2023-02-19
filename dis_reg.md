@@ -3,6 +3,10 @@ New Sites Model
 Waleed Idrees (Data Scientist) ,Ben Neffendorf (Head of Insight)
 2023-02-19
 
+# link to the code:
+
+<https://github.com/WaleedIdrees/DataStory/blob/main/dis_reg.Rmd>
+
 # Introduction to Model
 
 This model is build to understand the relationship between distance

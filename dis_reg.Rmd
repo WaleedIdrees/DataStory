@@ -292,6 +292,9 @@ df_ready<- df_test[ , !names(df_test) %in% c( "Cust_PostCode", "Site_PostCode1",
 
 
 
+# link to the code: 
+
+https://github.com/WaleedIdrees/DataStory/blob/main/dis_reg.Rmd
 
 # Introduction to Model
 
