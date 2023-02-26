@@ -296,34 +296,21 @@ df_ready<- df_test[ , !names(df_test) %in% c( "Cust_PostCode", "Site_PostCode1",
 
 https://github.com/WaleedIdrees/DataStory/blob/main/dis_reg.Rmd
 
+
 # Introduction to Model
 
-This model is build to understand the relationship between distance traveled and number of tests figure out where to install new RHC sites. Model takes the data from existing customers from out data base for all RHC sites. to start building a predictive model we need a target variable that we are trying to predict. We want to find out what location will yield good sales. So we use total sales as a target variable which will tell us if a certain location will yield good sales. 
-
-We use the data only for only RHC sites for this analysis as airport sites have different attributes compared to RHC sites. Target measure is total no of tests used as a measure of total sales. Its created by grouping data by Site postcode, customer postcode sector and month. So we get number of tests on each site from different postcode sector every month.
-
+This model is build to understand the relationship between distance traveled and number of Sales of a product from retail stores. Model takes the data from existing customers who bought the product. We want to find out how much distance customers a willing to travel to buy. So we use total Sales as target variable and distance as the explanatory variable and we see the relationship between distance customer travel to buy from retail stores. 
 
 # Data Collection 
 
-Explanatory variables is distance traveled in minutes and its pulled from f_master_tests_data. We then connect this data with the distance traveled table to get average distance traveled to site in mins. This information can be useful to help us figure out how much customers are willing to travel and how far two sites should be to avoid cannibalization.
+Explanatory variables is distance traveled in minutes. This information can be useful to help us figure out how much customers are willing to travel and how far two retail stores should be to avoid cannibalization.
 
-Total population variable is taken from Office of national statistics website. Population data is collected from 2011 census from office of national statistics website. Its not been updated since past 10 years but that's the only info we can collect at the moment for free. 
+Total population variable is taken from Office of national statistics website. Population data is collected from 2011 census from office of national statistics website. Its not been updated since past 10 years but that's the only info we can collect at the moment for free.
 
-
-```{r, fig.margin=TRUE}
-
-# df_ready |> 
-#   group_by(No_of_tests) |> 
-#   ggplot(aes(No_of_tests, fill = Site_PostCode)) +
-#   geom_histogram(position = "identity", alpha = 0.5, bins = 20 ) +
-#   labs(fill = NULL, x = "total tests freq by site")
-  
-
-```
 
 # Descriptive Statistics
 
-Final data used in this model has 24147 conversations. Average test from each sector is 8, with a max of 463 tests. Average time travelled to site is 69 mins and the max time traveled is 933 mins. 
+Final data used in this model has 24147 conversations. Average Sales from each sector is 8, with a max of 463 Sales. Average time travelled to site is 69 mins and the max time traveled is 933 mins. 
 
 ```{r}
 pacman::p_load(psych)
@@ -338,8 +325,8 @@ df_stats[ c(2,3) ,] %>%  knitr::kable( caption = "Descriptive Statistics of no o
 
 ```{r}
 df_ready_1<- df_ready %>% filter(!Site_PostCode %in% c("ab11 5bj", "nw4 3fb", "pa3 2td", "b40 1nt",  "w8 7rg") ) %>%  mutate(
-  cust_test_pop = No_of_tests/Cust_Pop,
-  ) %>% filter(cust_test_pop <= 0.05)
+  Sales = No_of_tests/Cust_Pop,
+  ) %>% filter(Sales <= 0.05)
 
 q1 <-
   round(as.tibble(quantile(
@@ -525,7 +512,7 @@ grob_explanation_1 <-
   grobTree(
     richtext_grob(
         "<span style='background-color:white'
-        ><b>Relationship between no of tests and distance travelled.</b>
+        ><b>Relationship between Sales and distance travelled.</b>
          <br>We show buckets of distance travelled at 10%, 25%, 50% , 75% and 95% quantile.
          <br>Graph also shows regression constant and slope coefficients for each bucket.
          </br>   
@@ -544,11 +531,12 @@ grob_explanation_1 <-
 ```
 
 
+
 ## Model
 
-Graphs below shows a people getting tested within different time buckets. the relationship between the average time and no of tests is given in each bucket using a regression equation. 
+Graphs below shows a people buying within different time buckets. the relationship between the average time and Sales is given in each bucket using a regression equation. 
 
-our constant for people who live within 0-10 mins distance explains that 1% of people who live from 0-10 mins distance get the test regardless of the avg time travel. However, as the time increases by 1 min we may loose there 0.04 test.
+our constant for people who live within 0-10 mins distance explains that 1% of people who live from 0-10 mins distance get the test regardless of the avg time travel. However, as the time increases by 1 min we may loose 0.04 test.
 
 The constant decreases as the average time traveled increases from 1.04 in 0-10 zone to .014 in 69-137 zone. Also the coefficient of effect gets smaller as we move from a smaller time zone to larger time zone.
 
@@ -557,7 +545,7 @@ The constant decreases as the average time traveled increases from 1.04 in 0-10 
 df_ready_group %>% 
   filter(Avg_time <=500) %>% 
   ggplot() +
-  aes(y= cust_test_pop, x = Avg_time) +
+  aes(y= Sales, x = Avg_time) +
   geom_smooth() +
   geom_vline(xintercept = q1, linetype = "longdash") + 
   geom_label(x = q1, y= 0.04 ,label = "0-10 mins ", hjust = 1, label.size = 0) +
