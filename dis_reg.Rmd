@@ -1,11 +1,10 @@
 ---
 title: 
-author: "Waleed Idrees (Data Scientist) ,Ben Neffendorf (Head of Insight)"
+author: "Waleed Idrees (Data Scientist)"
 date: "`r Sys.Date()`"
 output:
   github_document:
     df_print: paged
-subtitle: Report produced By Cignpost Diagnostics Data Department
 runningheader: Tufte Handout with R Markdown
 ---
 

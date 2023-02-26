@@ -1,6 +1,6 @@
 New Sites Model
 ================
-Waleed Idrees (Data Scientist) ,Ben Neffendorf (Head of Insight)
+Waleed Idrees (Data Scientist)
 2023-02-26
 
 # link to the code:
